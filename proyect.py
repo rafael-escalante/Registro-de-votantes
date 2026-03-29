@@ -1,3 +1,5 @@
+import pandas as pd
+import io
 import streamlit as st
 from supabase import create_client
 
@@ -14,14 +16,14 @@ def get_supabase():
 
 supabase = get_supabase()
 
-st.set_page_config(page_title="Sistema Electoral Yucatán", layout="wide")
+st.set_page_config(page_title="Base de control movilizador", layout="wide")
 
 # --- 2. LÓGICA DE ACCESO (OPTIMIZADA PARA 1 SOLO CLIC) ---
 if "auth_user" not in st.session_state:
     st.session_state.auth_user = None
 
 if st.session_state.auth_user is None:
-    st.title("🔐 Acceso al Sistema")
+    st.title("Acceso al Sistema")
     
     # Usamos un formulario limpio para el login
     with st.form("login_form"):
@@ -50,7 +52,7 @@ try:
         nombre_usuario = perfil['nombre']
         rol_cap = perfil['id_rol']  # <--- IMPORTANTE: Definimos el rol aquí
     else:
-        st.warning("⚠️ Usuario autenticado pero no vinculado en la tabla 'personas'.")
+        st.warning("Usuario autenticado pero no vinculado en la tabla 'personas'.")
         st.info(f"ID: {uid_actual}")
         if st.button("Cerrar Sesión"):
             st.session_state.auth_user = None
@@ -77,15 +79,25 @@ if st.sidebar.button("Cerrar Sesión"):
     st.rerun()
 
 # Navegación por pestañas
+# --- 4. CONFIGURACIÓN DE NAVEGACIÓN ---
+# Solo el Maestro (5) y el Seccional (1) tienen acceso a la pestaña de descargas
+pestañas_nombres = ["Registro", "Dashboard"]
 if rol_cap == 1:
-    tab1, tab2, tab3 = st.tabs(["📝 Registro Ciudadano", "📊 Dashboard", "⚙️ Administración"])
-else:
-    tab1, tab2 = st.tabs(["📝 Registro Ciudadano", "📊 Mis Números"])
-    tab3 = None
+    pestañas_nombres.append("⚙️ Administración")
+    pestañas_nombres.append("📥 Descargas")
+elif rol_cap == 5:
+    pestañas_nombres.append("⚙️ Administración Staff")
+    pestañas_nombres.append("📥 Descargas Globales")
+
+tabs = st.tabs(pestañas_nombres)
+tab1 = tabs[0] # Registro
+tab2 = tabs[1] # Dashboard
+tab3 = tabs[2] if rol_cap in [1, 5] else None # Administración
+tab4 = tabs[3] if rol_cap in [1, 5] else None # Descargas
 
 # --- PESTAÑA 1: REGISTRO DE CIUDADANOS (ACTUALIZADO) ---
 with tab1:
-    st.subheader("📝 Registro de Ciudadanos Promovidos")
+    st.subheader("Registro de Ciudadanos Promovidos")
     
     # 1. Cargamos la lista de promotores disponibles (Rol 3) para asignar el crédito
     # Filtramos por sección para que sea más fácil encontrar al promotor adecuado
@@ -109,7 +121,7 @@ with tab1:
         with c5: tel_val = st.text_input("Teléfono")
 
         st.divider()
-        st.subheader("🚀 Asignación de Promotor")
+        st.subheader("Asignación de Promotor")
         # Aquí es donde el Seccional elige a qué promotor le corresponde
         promotor_asignado = st.selectbox(
             "¿A qué promotor le corresponde este registro?", 
@@ -132,34 +144,59 @@ with tab1:
         ref_val = st.text_area("Referencias")
 
         if st.form_submit_button("✅ GUARDAR REGISTRO"):
-            if nom and ap_p and curp_val:
-                try:
-                    # El ID del promotor seleccionado
-                    id_promotor_dueño = dict_promotores[promotor_asignado]
+            if nom and ap_p and curp_val and tel_val:
+                # 1. LIMPIEZA: Quitamos espacios, guiones o paréntesis que el usuario pudo poner
+                tel_limpio = tel_val.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+                curp_limpio = curp_val.strip().upper()
+                
+                # 2. VALIDACIÓN DE TELÉFONO
+                if not (len(tel_limpio) == 10 and tel_limpio.isdigit()):
+                    st.error("❌ **ERROR EN TELÉFONO**: Debe tener exactamente 10 números (ejemplo: 9991234567).")
+                
+                # 3. VALIDACIÓN DE CURP (Ya que estamos, validamos que tenga 18 caracteres)
+                elif len(curp_limpio) != 18:
+                    st.error("❌ **ERROR EN CURP**: Debe tener exactamente 18 caracteres.")
+                else:
+                
+                    try:
+                        # 2. VALIDACIÓN: Consultamos si ya existe alguien con ese CURP
+                        # Buscamos solo el nombre y quién lo registró para informar al usuario
+                        check_duplicado = supabase.table("personas").select("id").eq("curp", curp_limpio).execute()
+                        
+                        if check_duplicado.data:
+                            # Si hay datos, significa que YA EXISTE
+                            persona_ya_esta = check_duplicado.data[0]
+                            st.error(f"⚠️ **ERROR: CIUDADANO YA REGISTRADO**")
+                            st.info(f"Esta persona ya fue dada de alta como: **{persona_ya_esta['nombre']} {persona_ya_esta['apellido_paterno']}**")
+                            
+                        else:
+                            # 3. SI NO EXISTE, PROCEDEMOS AL GUARDADO NORMAL
+                            id_promotor_dueño = dict_promotores[promotor_asignado]
+                            
+                            data_insert = {
+                                "nombre": nom.strip(),
+                                "apellido_paterno": ap_p.strip(),
+                                "apellido_materno": ap_m.strip(),
+                                "curp": curp_limpio,
+                                "telefono": tel_val,
+                                "calle": calle_val,
+                                "cruzamiento_1": cr1,
+                                "cruzamiento_2": cr2,
+                                "numero_casa": n_casa,
+                                "fraccionamiento_comisaria": zona_val,
+                                "referencias": ref_val,
+                                "seccion": sec_val,
+                                "id_rol": 4,
+                                "id_capturista": uid_actual,
+                                "id_superior": id_promotor_dueño
+                            }
+                            supabase.table("personas").insert(data_insert).execute()
+                            st.success(f"✅ ¡Registro exitoso! {nom} ha sido añadido a la base de datos.")
                     
-                    data_insert = {
-                        "nombre": nom,
-                        "apellido_paterno": ap_p,
-                        "apellido_materno": ap_m,
-                        "curp": curp_val,
-                        "telefono": tel_val,
-                        "calle": calle_val,
-                        "cruzamiento_1": cr1,
-                        "cruzamiento_2": cr2,
-                        "numero_casa": n_casa,
-                        "fraccionamiento_comisaria": zona_val,
-                        "referencias": ref_val,
-                        "seccion": sec_val,
-                        "id_rol": 4, # Es un promovido
-                        "id_capturista": uid_actual, # Quién lo tecleó (Rafael)
-                        "id_superior": id_promotor_dueño # A quién le pertenece (El Promotor)
-                    }
-                    supabase.table("personas").insert(data_insert).execute()
-                    st.success(f"¡Registro guardado! Asignado correctamente a {promotor_asignado}.")
-                except Exception as e:
-                    st.error(f"Error al guardar: {e}")
+                    except Exception as e:
+                        st.error(f"Error técnico: {e}")
             else:
-                st.warning("⚠️ Nombre, Apellido Paterno y CURP son obligatorios.")
+                st.warning("⚠️ El Nombre, Apellido Paterno y CURP son obligatorios.")
 
 # --- PESTAÑA 3: ADMINISTRACIÓN (STAFF) ---
 if tab3:
@@ -178,49 +215,135 @@ if tab3:
         with st.form("alta_staff", clear_on_submit=True):
             st.subheader("Nuevo Integrante")
             col_n, col_a, col_z = st.columns(3)
-            with col_n: nombre_s = st.text_input("Nombre")
-            with col_a: ap_s = st.text_input("Apellido Paterno")
-            with col_z: am_s = st.text_input("Apellido Materno")
+            with col_n: nombre_s = st.text_input("Nombre Staff")
+            with col_a: ap_s = st.text_input("Apellido Paterno Staff")
+            with col_z: am_s = st.text_input("Apellido Materno Staff")
             
             col_fg, col_fg2 = st.columns(2)
-            with col_fg: curp_s = st.text_input("CURP")
-            with col_fg2: num_tel = st.text_input("Teléfono")
+            with col_fg: curp_s = st.text_input("CURP Staff")
+            with col_fg2: num_tel = st.text_input("Teléfono Staff")
             
             st.divider()
-            st.subheader("📍 Ubicación")
+            st.subheader("📍 Ubicación Staff")
             c6, c7, c8, c9 = st.columns([2, 1, 1, 1])
-            with c6: calle_s = st.text_input("Calle")
-            with c7: cr1s = st.text_input("Cruzamiento 1")
-            with c8: cr2s = st.text_input("Cruzamiento 2")
-            with c9: n_casa_s = st.text_input("No. Casa")
+            with c6: calle_s = st.text_input("Calle Staff")
+            with c7: cr1s = st.text_input("Cruzamiento 1 Staff")
+            with c8: cr2s = st.text_input("Cruzamiento 2 Staff")
+            with c9: n_casa_s = st.text_input("No. Casa Staff")
             
-            zona_val_s = st.text_input("Fraccionamiento o Comisaría")
-            ref_val_S = st.text_area("Referencias")
+            zona_val_s = st.text_input("Fraccionamiento o Comisaría Staff")
+            ref_val_S = st.text_area("Referencias Staff")
             
-
             col_r, col_j, col_s = st.columns(3)
-            with col_r: rol_sel = st.selectbox("Rol", options=list(roles_dict.keys()))
-            with col_j: jefe_sel = st.selectbox("Jefe Directo", options=list(jefes_opciones.keys()))
-            with col_s: 
-                # TAMBIÉN AQUÍ USAMOS LA LISTA DESPLEGABLE
-                sec_s = st.selectbox("Asignar Sección", options=SECCIONES_YUCATAN)
+            with col_r: rol_sel = st.selectbox("Rol Staff", options=list(roles_dict.keys()))
+            with col_j: jefe_sel = st.selectbox("Jefe Directo Staff", options=list(jefes_opciones.keys()))
+            with col_s: sec_s = st.selectbox("Asignar Sección Staff", options=SECCIONES_YUCATAN)
 
-            if st.form_submit_button("🚀 VINCULAR AL EQUIPO"):
+            if st.form_submit_button("VINCULAR AL EQUIPO"):
+                # VALIDAMOS CON LAS VARIABLES DE ESTE FORMULARIO
+                if nombre_s and ap_s and curp_s and num_tel:
+                    tel_limpio_s = num_tel.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+                    curp_limpio_s = curp_s.strip().upper()
+                
+                    if not (len(tel_limpio_s) == 10 and tel_limpio_s.isdigit()):
+                        st.error("❌ El teléfono debe tener 10 dígitos.")
+                    elif len(curp_limpio_s) != 18:
+                        st.error("❌ El CURP debe tener 18 caracteres.")
+                    else:
+                        try:
+                            # Checamos duplicado de staff
+                            check_dup = supabase.table("personas").select("id").eq("curp", curp_limpio_s).execute()
+                            if check_dup.data:
+                                st.error("⚠️ Este integrante de staff ya está registrado.")
+                            else:
+                                nuevo_staff = {
+                                    "nombre": nombre_s.strip(),
+                                    "apellido_paterno": ap_s.strip(),
+                                    "apellido_materno": am_s.strip(),
+                                    "curp": curp_limpio_s,
+                                    "telefono": tel_limpio_s,
+                                    "calle": calle_s,
+                                    "cruzamiento_1": cr1s,
+                                    "cruzamiento_2": cr2s,
+                                    "numero_casa": n_casa_s,
+                                    "fraccionamiento_comisaria": zona_val_s,
+                                    "referencias": ref_val_S,
+                                    "id_rol": roles_dict[rol_sel],
+                                    "id_superior": jefes_opciones[jefe_sel],
+                                    "id_capturista": uid_actual,
+                                    "seccion": sec_s
+                                }
+                                supabase.table("personas").insert(nuevo_staff).execute()
+                                st.success(f"✅ Staff {nombre_s} vinculado a la sección {sec_s}.")
+                        except Exception as e:
+                            st.error(f"Error técnico: {e}")
+                else:
+                    st.warning("⚠️ Llene los campos obligatorios del Staff.")
+                    
+                    
+# --- PESTAÑA 4: CENTRO DE DESCARGAS (LOGICA MAESTRO VS SECCIONAL) ---
+if tab4:
+    with tab4:
+        st.header("Exportar Base de Datos a Excel")
+        st.info("El sistema generará un reporte con la información completa de ciudadanos y staff.")
+
+        if st.button("Generar Reporte para Descarga"):
+            with st.spinner("Procesando datos de Supabase..."):
                 try:
-                    nuevo_staff = {
-                        "nombre": nombre_s, "apellido_paterno": ap_s, "apellido_materno":am_s, "curp": curp_s,
-                        "telefono":num_tel, "calle":calle_s, "cruzamiento_1": cr1s, "cruzamiento_2": cr2s,
-                        "numero_casa": n_casa_s, "fraccionamiento_comisaria": zona_val_s, "referencias":ref_val_S,
-                        "id_rol": roles_dict[rol_sel],
-                        "id_superior": jefes_opciones[jefe_sel], "id_capturista": uid_actual,
-                        "seccion": sec_s, "apellido_materno": "", "telefono": "0", 
-                        "calle": "", "cruzamiento_1": "", "cruzamiento_2": "", 
-                        "numero_casa": "", "fraccionamiento_comisaria": "", "referencias": ""
-                    }
-                    supabase.table("personas").insert(nuevo_staff).execute()
-                    st.success(f"Staff vinculado a la sección {sec_s}.")
+                    if rol_cap == 5:
+                        # EL MAESTRO DESCARGA ABSOLUTAMENTE TODO
+                        res = supabase.table("personas").select("*").execute()
+                        nombre_archivo = "BASE_DATOS_TOTAL_YUCATAN.xlsx"
+                        desc_msg = "Reporte Global (Todas las secciones)"
+                    else:
+                        # EL SECCIONAL SOLO SU SECCION
+                        mi_seccion = perfil.get('seccion')
+                        res = supabase.table("personas").select("*").eq("seccion", mi_seccion).execute()
+                        nombre_archivo = f"REPORTE_SECCION_{mi_seccion}.xlsx"
+                        desc_msg = f"Reporte exclusivo de la Sección {mi_seccion}"
+
+                    if res.data:
+                        # Convertimos a Pandas para manipularlo
+                        df = pd.DataFrame(res.data)
+
+                        # 1. LIMPIEZA DE COLUMNAS (Para que el cliente vea un Excel limpio)
+                        columnas_borrar = ['id', 'id_auth', 'id_superior', 'id_capturista']
+                        df = df.drop(columns=[c for c in columnas_borrar if c in df.columns])
+
+                        # 2. TRADUCCIÓN DE ROLES (Opcional, para que no salgan números 1, 2, 3...)
+                        mapa_roles = {1: "Seccional", 2: "Territorial", 3: "Promotor", 4: "Promovido", 5: "Administrador"}
+                        df['id_rol'] = df['id_rol'].map(mapa_roles)
+
+                        # 3. REORDENAR COLUMNAS PARA EL CLIENTE
+                        orden = [
+                            'nombre', 'apellido_paterno', 'apellido_materno', 'curp', 
+                            'telefono', 'id_rol', 'seccion', 'fraccionamiento_comisaria', 
+                            'calle', 'numero_casa', 'fecha_registro'
+                        ]
+                        df = df[[c for c in orden if c in df.columns]]
+
+                        # 4. CREAR EXCEL EN MEMORIA
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            df.to_excel(writer, index=False, sheet_name='Base_Datos')
+                        
+                        excel_data = output.getvalue()
+
+                        st.success(f"✅ {desc_msg} generado con {len(df)} registros.")
+                        
+                        # BOTÓN DE DESCARGA FINAL
+                        st.download_button(
+                            label="💾 GUARDAR ARCHIVO EXCEL",
+                            data=excel_data,
+                            file_name=nombre_archivo,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    else:
+                        st.warning("No se encontraron datos disponibles para descargar.")
+                        
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Error al procesar el Excel: {e}")
+                        
 
 # --- 5. VISTA DE CAPTURAS RECIENTES (AL FINAL) ---
 st.divider()
