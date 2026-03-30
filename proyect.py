@@ -6,8 +6,8 @@ from supabase import create_client
 #comand: python -m streamlit run proyect.py
 
 # --- 1. CREDENCIALES ---
-url = "https://movucqjgwjnsvsyivrls.supabase.co"
-key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1vdnVjcWpnd2puc3ZzeWl2cmxzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2MzMwMDAsImV4cCI6MjA4ODIwOTAwMH0.DrZTwU4K1hB8kYapncLTzri-o0PXFmqFGnvI48e2mOI"
+url = st.secrets["https://movucqjgwjnsvsyivrls.supabase.co"]
+key = st.secrets["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1vdnVjcWpnd2puc3ZzeWl2cmxzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2MzMwMDAsImV4cCI6MjA4ODIwOTAwMH0.DrZTwU4K1hB8kYapncLTzri-o0PXFmqFGnvI48e2mOI"]
 
 # Mantenemos la conexión "viva" para evitar retrasos en el primer clic
 @st.cache_resource
