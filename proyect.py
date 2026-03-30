@@ -5,10 +5,20 @@ from supabase import create_client
 
 #comand: python -m streamlit run proyect.py
 
-# --- 1. CREDENCIALES ---
-url = st.secrets["https://movucqjgwjnsvsyivrls.supabase.co"]
-key = st.secrets["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1vdnVjcWpnd2puc3ZzeWl2cmxzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2MzMwMDAsImV4cCI6MjA4ODIwOTAwMH0.DrZTwU4K1hB8kYapncLTzri-o0PXFmqFGnvI48e2mOI"]
+# --- 1. CREDENCIALES (MODO HÍBRIDO) ---
+import os
 
+# Intentamos sacar las llaves de st.secrets (para la web)
+# Si no existen, usamos el texto directo (para tu compu)
+try:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+except:
+    # PEGA AQUÍ TUS LLAVES REALES PARA QUE FUNCIONE EN TU COMPU
+    url = "https://movucqjgwjnsvsyivrls.supabase.co"
+    key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." # Tu key completa
+    
+    
 # Mantenemos la conexión "viva" para evitar retrasos en el primer clic
 @st.cache_resource
 def get_supabase():
